@@ -423,11 +423,14 @@ impl KwinWindowCallback {
 
 fn temporary_kwin_plugin_name() -> Result<String> {
     let pid = std::process::id();
-    let sequence = KWIN_PLUGIN_SEQUENCE
-        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-            value.checked_add(1)
-        })
-        .map_err(|_| anyhow::anyhow!("temporary KWin plugin sequence exhausted"))?;
+    // Stable equivalent of `AtomicU64::try_update(.., checked_add)`. `fetch_add`
+    // returns the previous value and `checked_add` on it reproduces exactly the
+    // overflow condition the closure existed to detect, using stable primitives
+    // only. `try_update` was the sole unstable-library usage in this crate.
+    let previous = KWIN_PLUGIN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let sequence = previous
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("temporary KWin plugin sequence exhausted"))?;
     let mut nonce = [0_u8; 16];
     getrandom::fill(&mut nonce).map_err(|error| {
         anyhow::anyhow!("failed to generate temporary KWin plugin nonce: {error}")
