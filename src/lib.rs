@@ -17,6 +17,8 @@ pub mod indicator;
 mod keyboard_keymap;
 mod pixelflux;
 mod pointer_path;
+#[path = "preflight.rs"]
+mod preflight_impl;
 mod remote_desktop;
 mod screenshot_file;
 #[path = "screenshot.rs"]
@@ -64,6 +66,12 @@ pub mod screenshot {
         ScreenshotPayloadOptions,
     };
     pub use crate::screenshot_impl::{capture_screenshot_raw, RawScreenshotCapture};
+}
+
+pub mod preflight {
+    pub use crate::preflight_impl::{
+        preflight_report, DrivingMode, PreflightReport, RecommendedTier,
+    };
 }
 
 #[doc(hidden)]
