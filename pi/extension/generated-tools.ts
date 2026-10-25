@@ -8,8 +8,8 @@ export interface GeneratedMcpToolDefinition {
 }
 
 export const GENERATED_SERVER_VERSION = "0.7.25";
-export const GENERATED_TOOL_CATALOG_HASH = "ca02e39b8ba12b0f3774af084e67a8401bdd0d3777a82af05da9a7579fa9e605";
-export const GENERATED_SHELL_TOOL_CATALOG_HASH = "b0ae29440000015c1735b1da5744fbaccb505202e49de40b565800130e6dc48d";
+export const GENERATED_TOOL_CATALOG_HASH = "704bc70f2c44b7945ce73d4d090866c76d38626f1c0e185e389739a996fb934a";
+export const GENERATED_SHELL_TOOL_CATALOG_HASH = "58ecb194dd49cabec0e0fa6c681aa935fd2708b2d8747c484d3a697a3fa70abd";
 export const GENERATED_MCP_TOOLS =
 [
   {
@@ -1119,6 +1119,42 @@ export const GENERATED_MCP_TOOLS =
       "type": "object"
     },
     "name": "perform_action"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Classify HOW to drive a target before acting on it. Reports one of three driving modes: full_semantic (AT-SPI exposes actions/editable text, act by role and name), semantic_id_to_coords (tree has identity and geometry but the Action interface is empty, as on Chromium/Electron ATK bridges, so resolve the element then click its bounds), or no_semantic (no usable tree, use screenshots). Also classifies the process as electron/chromium/chrome and recommends cdp when a browser tier would be strictly better. Call this on the first action against an unfamiliar window; it avoids turns lost to perform_action returning implemented:false.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "app_name_or_bundle_identifier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_nodes": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pid": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "preflight"
   },
   {
     "annotations": {

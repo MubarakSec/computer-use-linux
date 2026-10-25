@@ -272,6 +272,31 @@ impl ComputerUseLinux {
     }
 
     #[tool(
+        name = "preflight",
+        description = "Classify HOW to drive a target before acting on it. Reports one of three driving modes: full_semantic (AT-SPI exposes actions/editable text, act by role and name), semantic_id_to_coords (tree has identity and geometry but the Action interface is empty, as on Chromium/Electron ATK bridges, so resolve the element then click its bounds), or no_semantic (no usable tree, use screenshots). Also classifies the process as electron/chromium/chrome and recommends cdp when a browser tier would be strictly better. Call this on the first action against an unfamiliar window; it avoids turns lost to perform_action returning implemented:false.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn preflight(
+        &self,
+        Parameters(params): Parameters<PreflightParams>,
+    ) -> Json<crate::preflight::PreflightReport> {
+        self.indicator.action("preflight").await;
+        Json(
+            crate::preflight::preflight_report(
+                params.app_name_or_bundle_identifier.as_deref(),
+                params.pid,
+                params.max_nodes,
+            )
+            .await,
+        )
+    }
+
+    #[tool(
         name = "list_windows",
         description = "List compositor windows with title, app id, class, focus state, client type, and known bounds.",
         annotations(
@@ -2359,6 +2384,13 @@ impl ServerHandler for ComputerUseLinux {}
 
 fn shell_execution_enabled() -> bool {
     shell_execution_enabled_value(env::var(SHELL_ENABLE_ENV).ok().as_deref())
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+struct PreflightParams {
+    app_name_or_bundle_identifier: Option<String>,
+    pid: Option<u32>,
+    max_nodes: Option<usize>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

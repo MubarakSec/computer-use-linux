@@ -11,6 +11,8 @@ mod gnome_extension;
 mod identity;
 pub mod indicator;
 mod keyboard_keymap;
+#[path = "preflight.rs"]
+mod preflight_impl;
 mod remote_desktop;
 #[path = "screenshot.rs"]
 mod screenshot_impl;
@@ -52,6 +54,12 @@ pub mod screenshot {
         ScreenshotPayloadOptions,
     };
     pub use crate::screenshot_impl::{capture_screenshot_raw, RawScreenshotCapture};
+}
+
+pub mod preflight {
+    pub use crate::preflight_impl::{
+        preflight_report, DrivingMode, PreflightReport, RecommendedTier,
+    };
 }
 
 #[doc(hidden)]

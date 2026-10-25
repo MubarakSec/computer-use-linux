@@ -22,6 +22,7 @@ EXPECTED_TOOLS = {
     "setup_accessibility",
     "setup_window_targeting",
     "list_apps",
+    "preflight",
     "get_app_state",
     "list_windows",
     "focused_window",
@@ -116,6 +117,7 @@ POST_ACTION_CAPTURE_PROPS = {
 READ_ONLY_TOOLS = {
     "doctor",
     "list_apps",
+    "preflight",
     "get_app_state",
     "list_windows",
     "focused_window",

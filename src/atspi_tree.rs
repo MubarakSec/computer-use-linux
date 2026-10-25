@@ -989,10 +989,31 @@ async fn select_roots(
     }
 
     let app_filter_matched = !selected.is_empty();
+
+    // Resolve the process id from the matched roots so callers (e.g. preflight)
+    // can classify the target even when it was selected by name rather than pid.
+    // Only commit when every matched root resolves to the same pid.
+    let resolved_pid = if selected.is_empty() {
+        None
+    } else {
+        let dbus = DBusProxy::new(conn.connection()).await.ok();
+        let mut pids = Vec::new();
+        for object_ref in &selected {
+            if let Some(pid) = object_ref_pid(dbus.as_ref(), object_ref).await {
+                pids.push(pid);
+            }
+        }
+        if !pids.is_empty() && pids.iter().all(|pid| *pid == pids[0]) {
+            Some(pids[0])
+        } else {
+            None
+        }
+    };
+
     SelectedRoots {
         roots: selected,
         scoped: true,
-        pid: None,
+        pid: resolved_pid,
         app_filter_matched,
     }
 }
