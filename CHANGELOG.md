@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Report an explicitly scoped AT-SPI root that exposes zero nodes (for example Firefox/Chromium/Electron without accessibility force-enabled) with an actionable observation note instead of an unexplained empty tree.
+- Report an app/window target that matches no AT-SPI application root with an explicit "matched no application root" note instead of a misleading empty scoped tree; post-action tree observations get the same treatment.
+
+### Fixed
+
+- Make the targeted `get_app_state` screenshot focus error name the recovery path: call the `screenshot` tool with the same window target (`raise_window` defaults to true), then retry `get_app_state`.
+
 ## [0.7.56] - 2026-11-17
 
 ### Added
@@ -367,7 +376,6 @@ Thanks @lihaoze123 for the fix and @luochen1990 for the report ([#301](https://g
 - Return the partial accessibility tree, marked truncated, when a snapshot reaches its 10-second deadline, instead of failing with an empty tree.
 - Allow `max_nodes` up to 10000, so a snapshot can read past a large embedded browser document to the app's own controls. The default stays 1000. (#290)
 - Isolate the text preflight test from an inherited KDE desktop session. Thanks @ArcticLampyrid. (#293)
-
 ## [0.7.25] - 2026-10-24
 
 ### Fixed

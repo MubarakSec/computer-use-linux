@@ -890,13 +890,18 @@ impl ComputerUseLinux {
                         tree_root_pid = snapshot.root_pid;
                         accessibility_tree_truncated = snapshot.truncated;
                         window_scope = snapshot.window_scope;
+                        let accessibility_filter_matched = snapshot.app_filter_matched;
                         let raw_count = snapshot.nodes.len();
                         let (nodes, note) = compact_accessibility_tree_with_note(
                             snapshot.nodes,
                             tree_scoped,
                             accessibility_tree_truncated,
                         );
-                        shell_only_note = note;
+                        shell_only_note = accessibility_filter_unmatched_note(
+                            accessibility_filter_matched,
+                            accessibility_target_requested,
+                        )
+                        .or(note);
                         let nodes = if params.interactive_only.unwrap_or(false) {
                             let compacted = nodes.len();
                             let nodes = interactive_accessibility_tree(nodes);
@@ -3800,7 +3805,7 @@ impl ComputerUseLinux {
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
     version = "0.7.56",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll sends the move and the wheel through the uinput pointer, and an untargeted scroll sends the wheel through ydotool, or the portal without its daemon. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text goes into the target's focused editable field through AT-SPI EditableText and must read back, and otherwise can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes, optional screenshot_file_path (an absolute path to a new file, stdio only, refused over HTTP) to save the screenshot there instead of returning image content, and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. Pass that result's snapshot_id with the index or selector: each get_app_state or include_tree tree replaces the cached one, and a call naming a replaced snapshot is refused before any input. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result through a keyboard backend confirms dispatch only and leaves field contents unverified; only the GNOME AT-SPI fallback reads the field back. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content."
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll sends the move and the wheel through the uinput pointer, and an untargeted scroll sends the wheel through ydotool, or the portal without its daemon. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text goes into the target's focused editable field through AT-SPI EditableText and must read back, and otherwise can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes, optional screenshot_file_path (an absolute path to a new file, stdio only, refused over HTTP) to save the screenshot there instead of returning image content, and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. Pass that result's snapshot_id with the index or selector: each get_app_state or include_tree tree replaces the cached one, and a call naming a replaced snapshot is refused before any input. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result through a keyboard backend confirms dispatch only and leaves field contents unverified; only the GNOME AT-SPI fallback reads the field back. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. If get_app_state resolves an app or window target but the scoped AT-SPI root exposes zero nodes, the result reports that instead of hiding it; relaunch the app with accessibility enabled or use screenshots/CDP/browser tooling."
 )]
 impl ServerHandler for ComputerUseLinux {
     async fn call_tool(
@@ -6535,7 +6540,12 @@ impl ComputerUseLinux {
                     if let Some(note) = truncated_accessibility_tree_note(snapshot.truncated) {
                         notes.push(note.to_string());
                     }
-                    if let Some(note) = shell_only_note {
+                    if let Some(note) = accessibility_filter_unmatched_note(
+                        snapshot.app_filter_matched,
+                        accessibility_target_requested,
+                    )
+                    .or(shell_only_note)
+                    {
                         notes.push(note.to_string());
                     }
                     let mut nodes = TreeNodes::from(nodes);
@@ -9590,13 +9600,47 @@ fn fit_tree(
     }
 }
 
+/// Note appended when a target matched an AT-SPI root but the root exposed
+/// no children. This is distinct from an unscoped desktop snapshot: silently
+/// returning an empty tree reads as "the UI is empty", which is almost never
+/// what the caller meant to learn.
+fn scoped_empty_accessibility_tree_note(
+    nodes: &[AccessibilityNode],
+    scoped: bool,
+    truncated: bool,
+) -> Option<&'static str> {
+    if !scoped || !nodes.is_empty() || truncated {
+        return None;
+    }
+    Some(
+        "AT-SPI resolved the requested target but the root exposed zero nodes. Browser/renderer content (Firefox, Chromium, Electron) is often not exposed unless accessibility is force-enabled; relaunch with accessibility enabled or use screenshots/CDP/browser tooling. This tree does not establish that the UI is empty.",
+    )
+}
+
+/// Note appended when the caller asked for an app/window target, it resolved
+/// to no AT-SPI application root at all, and the snapshot therefore returned
+/// zero roots rather than the whole desktop. This is stronger than the
+/// shell-only/empty-chrome cases: the target app is absent from AT-SPI.
+fn accessibility_filter_unmatched_note(
+    app_filter_matched: bool,
+    target_requested: bool,
+) -> Option<&'static str> {
+    if app_filter_matched || !target_requested {
+        return None;
+    }
+    Some(
+        "The requested accessibility target matched no AT-SPI application root, so the snapshot returned no tree instead of the whole desktop. The app may expose no accessibility tree (Firefox, Chromium, and Electron commonly need accessibility force-enabled); use screenshots/CDP/browser tooling or relaunch the app with accessibility enabled.",
+    )
+}
+
 fn compact_accessibility_tree_with_note(
     nodes: Vec<AccessibilityNode>,
     scoped: bool,
     truncated: bool,
 ) -> (Vec<AccessibilityNode>, Option<&'static str>) {
     // Menu ancestry is observation metadata; compaction can remove its nodes.
-    let note = shell_only_accessibility_tree_note(&nodes, scoped, truncated);
+    let note = shell_only_accessibility_tree_note(&nodes, scoped, truncated)
+        .or_else(|| scoped_empty_accessibility_tree_note(&nodes, scoped, truncated));
     (compact_accessibility_tree(nodes), note)
 }
 
@@ -10126,7 +10170,7 @@ fn ensure_readonly_screenshot_target_is_visible(window: &WindowInfo) -> Result<(
     }
     if !window.focused {
         anyhow::bail!(
-            "targeted get_app_state screenshot requires the window to already be focused; use the screenshot tool to raise it before capture"
+            "targeted get_app_state screenshot requires the window to already be focused; call the screenshot tool with the same window target (raise_window defaults to true), then retry get_app_state"
         );
     }
     Ok(())
@@ -13777,6 +13821,33 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
         assert!(shell_only_accessibility_tree_note(&nodes, false, false).is_none());
         assert!(shell_only_accessibility_tree_note(&nodes, true, true).is_none());
         assert!(shell_only_accessibility_tree_note(&[], true, false).is_none());
+    }
+
+    #[test]
+    fn unmatched_filter_explains_missing_target_root() {
+        let note = accessibility_filter_unmatched_note(false, true).unwrap();
+        assert!(note.contains("matched no AT-SPI application root"));
+        assert!(note.contains("instead of the whole desktop"));
+        assert!(accessibility_filter_unmatched_note(true, true).is_none());
+        assert!(accessibility_filter_unmatched_note(false, false).is_none());
+    }
+
+    #[test]
+    fn scoped_empty_tree_explains_missing_browser_content() {
+        let note = scoped_empty_accessibility_tree_note(&[], true, false).unwrap();
+        assert!(note.contains("zero nodes"));
+        assert!(note.contains("accessibility is force-enabled"));
+        assert!(scoped_empty_accessibility_tree_note(&[], false, false).is_none());
+        assert!(scoped_empty_accessibility_tree_note(&[], true, true).is_none());
+        let mut content = node(0, None);
+        assert!(
+            scoped_empty_accessibility_tree_note(std::slice::from_ref(&content), true, false)
+                .is_none()
+        );
+        content.role = "frame".to_string();
+        let (compacted, compacted_note) = compact_accessibility_tree_with_note(vec![], true, false);
+        assert!(compacted.is_empty());
+        assert!(compacted_note.is_some());
     }
 
     #[test]

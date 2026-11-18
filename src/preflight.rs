@@ -272,7 +272,6 @@ fn count_state(nodes: &[AccessibilityNode], state: &str) -> usize {
         .count()
 }
 
-
 /// Classify a process as electron/chromium/chrome by reading /proc.
 ///
 /// Returns the flavour and the command line so callers can detect
