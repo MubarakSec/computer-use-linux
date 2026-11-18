@@ -323,9 +323,12 @@ pub(crate) struct AccessibilitySnapshot {
     pub nodes: Vec<AccessibilityNode>,
     /// True when registry roots were filtered to an app name and/or pid.
     pub scoped: bool,
-    /// The pid every root belongs to, when roots were matched by pid. None
-    /// when they were matched by app name alone or not filtered at all: those
-    /// roots can belong to any app, so no single pid describes the tree.
+    /// The pid the tree's roots resolve to. For pid-matched targets this is
+    /// the requested pid. For app-name-matched targets it is set only when
+    /// at least one matched root resolves to a pid and every resolvable root
+    /// agrees on it; roots whose pid cannot be read abstain. `None` means no
+    /// single pid describes the tree (filter matched nothing, roots disagreed,
+    /// or no filter was supplied).
     pub root_pid: Option<u32>,
     /// True when selected roots satisfy the supplied app/name filter, or no
     /// filter was supplied. Normal snapshots retain their PID-only fallback;
@@ -1810,6 +1813,16 @@ fn app_name_needle(app_name_or_bundle_identifier: Option<&str>) -> Option<String
         .map(|value| value.to_ascii_lowercase())
 }
 
+/// Conservative pid vote over matched roots' owners: commits a pid only when
+/// at least one owner pid resolved and every resolvable root agrees on it.
+/// Roots whose owner pid cannot be read abstain from the vote.
+fn pid_agreement(pids: &[u32]) -> Option<u32> {
+    match pids.first() {
+        Some(first) if pids.iter().all(|pid| pid == first) => Some(*first),
+        _ => None,
+    }
+}
+
 async fn select_roots(
     conn: &AccessibilityConnection,
     roots: Vec<ObjectRefOwned>,
@@ -1912,7 +1925,8 @@ async fn select_roots(
 
     // Resolve the process id from the matched roots so callers (e.g. preflight)
     // can classify the target even when it was selected by name rather than pid.
-    // Only commit when every matched root resolves to the same pid.
+    // Commit only when at least one matched root resolves to a pid and every
+    // resolvable root agrees; roots whose pid cannot be read abstain.
     let resolved_pid = if selected.is_empty() {
         None
     } else {
@@ -1923,11 +1937,7 @@ async fn select_roots(
                 pids.push(pid);
             }
         }
-        if !pids.is_empty() && pids.iter().all(|pid| *pid == pids[0]) {
-            Some(pids[0])
-        } else {
-            None
-        }
+        pid_agreement(&pids)
     };
 
     SelectedRoots {
@@ -2334,6 +2344,20 @@ fn object_ref_id(object_ref: &ObjectRefOwned) -> String {
 mod tests {
     use super::insert_fixture::*;
     use super::*;
+
+    #[test]
+    fn pid_agreement_commits_a_single_agreeing_pid() {
+        assert_eq!(pid_agreement(&[4242]), Some(4242));
+        assert_eq!(pid_agreement(&[4242, 4242, 4242]), Some(4242));
+    }
+
+    #[test]
+    fn pid_agreement_rejects_disagreement_and_empty() {
+        assert_eq!(pid_agreement(&[]), None);
+        assert_eq!(pid_agreement(&[1, 2]), None);
+        assert_eq!(pid_agreement(&[4242, 4242, 7]), None);
+    }
+
     use crate::test_sockets::PrivateBus;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},

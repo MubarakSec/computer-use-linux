@@ -137,15 +137,34 @@ pub async fn preflight_report(
         .filter(|node| node.supports_editable_text)
         .count();
 
-    let mode = classify(interior_nodes, nodes_with_actions, nodes_with_editable_text);
+    let mode = classify(interior_nodes, nodes_with_actions, nodes_with_editable_text, truncated);
 
-    // Prefer the pid reported by the tree root so we classify the right process.
-    let pid = target_pid.or(snapshot_root_pid);
+    // The tree's roots own the facts measured below, so trust the resolved
+    // pid over the requested one; fall back to the requested pid only when
+    // the roots could not be resolved (or the snapshot failed).
+    let pid = snapshot_root_pid.or(target_pid);
+    let pid_mismatch_note = match (target_pid, snapshot_root_pid) {
+        (Some(requested), Some(resolved)) if requested != resolved => Some(format!(
+            "Requested pid {requested} owns no matched AT-SPI root; classified pid {resolved}, which owns the tree that was measured."
+        )),
+        _ => None,
+    };
     let (process_flavor, cmdline_hint) = pid.map(process_flavor).unwrap_or((None, None));
     let is_chromium_family = process_flavor.is_some();
 
     let recommended_tier = recommend_tier(mode, is_chromium_family, cmdline_hint.as_deref());
-    let remedy = remedy(mode, is_chromium_family, process_flavor.as_deref());
+    // On a snapshot failure the report's note already carries the real
+    // cause; do not layer a Chromium-specific relaunch remedy on top of it.
+    let remedy = if error.is_some() {
+        None
+    } else {
+        remedy(
+            mode,
+            is_chromium_family,
+            process_flavor.as_deref(),
+            cmdline_hint.as_deref(),
+        )
+    };
 
     let target = app_name_or_bundle_identifier
         .map(str::to_string)
@@ -170,12 +189,22 @@ pub async fn preflight_report(
         process_flavor,
         is_chromium_family,
         remedy,
-        note: match error {
-            Some(err) => format!("AT-SPI snapshot failed: {err}"),
-            None if truncated => format!(
-                "Tree hit the node budget ({max_nodes}); raise max_nodes or scope to a narrower window for complete counts."
-            ),
-            None => String::new(),
+        note: {
+            let mut note = match error {
+                Some(err) => format!("AT-SPI snapshot failed: {err}"),
+                None if truncated => format!(
+                    "Tree hit the node budget ({max_nodes}); raise max_nodes or scope to a narrower window for complete counts."
+                ),
+                None => String::new(),
+            };
+            if let Some(mismatch) = pid_mismatch_note {
+                note = if note.is_empty() {
+                    mismatch
+                } else {
+                    format!("{mismatch} {note}")
+                };
+            }
+            note
         },
     }
 }
@@ -184,12 +213,22 @@ fn classify(
     interior_nodes: usize,
     nodes_with_actions: usize,
     nodes_with_editable_text: usize,
+    truncated: bool,
 ) -> DrivingMode {
-    if interior_nodes == 0 {
-        return DrivingMode::NoSemantic;
-    }
+    // Actions/editable text are counted at every depth, including the
+    // depth-0 root: a root-only tree whose root is itself actionable is
+    // still drivable semantically.
     if nodes_with_actions > 0 || nodes_with_editable_text > 0 {
         return DrivingMode::FullSemantic;
+    }
+    if interior_nodes == 0 {
+        // A budget-cut read with zero interior nodes cannot rule out a
+        // richer tree below; do not declare vision on partial data.
+        return if truncated {
+            DrivingMode::SemanticIdToCoords
+        } else {
+            DrivingMode::NoSemantic
+        };
     }
     DrivingMode::SemanticIdToCoords
 }
@@ -207,7 +246,7 @@ fn recommend_tier(
             // ...unless the user already launched it with the accessibility
             // flag, in which case the AT-SPI tree is the intended path and
             // asking for a debug port would be a worse trade.
-            if cmdline.is_some_and(|line| line.contains("--force-renderer-accessibility")) {
+            if cmdline.is_some_and(has_force_renderer_accessibility) {
                 RecommendedTier::Atspi
             } else {
                 RecommendedTier::Cdp
@@ -215,6 +254,18 @@ fn recommend_tier(
         }
         _ => RecommendedTier::Atspi,
     }
+}
+
+/// Chromium reads `--force-renderer-accessibility` presence-wise, so any
+/// `=value` still enables it; only the exact switch (case-insensitive,
+/// optional `=value`) counts. `--no-force-renderer-accessibility` and
+/// tokens that merely contain the string do not.
+fn has_force_renderer_accessibility(cmdline: &str) -> bool {
+    cmdline.split_whitespace().any(|token| {
+        let lower = token.to_ascii_lowercase();
+        lower == "--force-renderer-accessibility"
+            || lower.starts_with("--force-renderer-accessibility=")
+    })
 }
 
 fn driving_advice(mode: DrivingMode) -> &'static str {
@@ -235,16 +286,28 @@ fn driving_advice(mode: DrivingMode) -> &'static str {
     }
 }
 
-fn remedy(mode: DrivingMode, is_chromium_family: bool, flavor: Option<&str>) -> Option<String> {
+fn remedy(
+    mode: DrivingMode,
+    is_chromium_family: bool,
+    flavor: Option<&str>,
+    cmdline: Option<&str>,
+) -> Option<String> {
     if mode == DrivingMode::FullSemantic {
         return None;
     }
     if is_chromium_family {
+        let name = flavor.unwrap_or("Chromium-family");
+        if cmdline.is_some_and(has_force_renderer_accessibility) {
+            return Some(format!(
+                "{name} app was already launched with --force-renderer-accessibility but still \
+                 exposes no AT-SPI Action interface. Check that the flag reached the renderer \
+                 process, or drive it over CDP for full DOM access."
+            ));
+        }
         return Some(format!(
-            "{} app exposes no AT-SPI Action interface. Relaunch with \
-             --force-renderer-accessibility to populate the tree (measured on this host: \
-             2 -> 93 nodes), or drive it over CDP for full DOM access.",
-            flavor.unwrap_or("Chromium-family")
+            "{name} app exposes no AT-SPI Action interface. Relaunch with \
+             --force-renderer-accessibility to populate the tree, or drive it \
+             over CDP for full DOM access."
         ));
     }
     match mode {
@@ -272,6 +335,72 @@ fn count_state(nodes: &[AccessibilityNode], state: &str) -> usize {
         .count()
 }
 
+const CHROME_BASENAMES: &[&str] = &[
+    "chrome",
+    "google-chrome",
+    "google-chrome-stable",
+    "google-chrome-beta",
+    "google-chrome-unstable",
+    "chrome-wrapper",
+];
+const CHROMIUM_BASENAMES: &[&str] = &["chromium", "chromium-browser"];
+const ELECTRON_BASENAMES: &[&str] = &[
+    "electron",
+    "code",
+    "code-insiders",
+    "vscode-oss",
+    "slack",
+    "discord",
+    "obsidian",
+    "signal-desktop",
+    "element-desktop",
+    "mattermost-desktop",
+    "teams-for-linux",
+];
+
+fn flavor_of(base: &str) -> Option<&'static str> {
+    if ELECTRON_BASENAMES.contains(&base) {
+        Some("electron")
+    } else if CHROMIUM_BASENAMES.contains(&base) {
+        Some("chromium")
+    } else if CHROME_BASENAMES.contains(&base) {
+        Some("chrome")
+    } else {
+        None
+    }
+}
+
+fn path_basename(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+/// Pure classification from the exe path and the joined command line: match
+/// lowercased basenames of the exe and of argv[0], never arbitrary path or
+/// argument substrings (so `gedit ~/notes/chrome-notes.txt` stays a GTK app).
+/// Electron renames its binary per app (code, slack, …), which is why the
+/// known-app basenames are matched too.
+fn flavor_from_paths(exe: Option<&str>, cmdline: Option<&str>) -> Option<&'static str> {
+    let mut hits = Vec::new();
+    if let Some(exe) = exe {
+        if let Some(flavor) = flavor_of(&path_basename(exe).to_ascii_lowercase()) {
+            hits.push(flavor);
+        }
+    }
+    if let Some(cmdline) = cmdline {
+        if let Some(argv0) = cmdline.split_whitespace().next() {
+            if let Some(flavor) = flavor_of(&path_basename(argv0).to_ascii_lowercase()) {
+                hits.push(flavor);
+            }
+        }
+    }
+    for wanted in ["electron", "chromium", "chrome"] {
+        if hits.contains(&wanted) {
+            return Some(wanted);
+        }
+    }
+    None
+}
+
 /// Classify a process as electron/chromium/chrome by reading /proc.
 ///
 /// Returns the flavour and the command line so callers can detect
@@ -297,24 +426,10 @@ fn process_flavor(pid: u32) -> (Option<String>, Option<String>) {
         .ok()
         .map(|path| path.to_string_lossy().into_owned());
 
-    let haystack = format!(
-        "{} {}",
-        exe.as_deref().unwrap_or_default(),
-        cmdline.as_deref().unwrap_or_default()
+    (
+        flavor_from_paths(exe.as_deref(), cmdline.as_deref()).map(str::to_string),
+        cmdline,
     )
-    .to_ascii_lowercase();
-
-    let flavor = if haystack.contains("electron") {
-        Some("electron")
-    } else if haystack.contains("chromium") {
-        Some("chromium")
-    } else if haystack.contains("chrome") {
-        Some("chrome")
-    } else {
-        None
-    };
-
-    (flavor.map(str::to_string), cmdline)
 }
 
 #[cfg(test)]
@@ -349,22 +464,35 @@ mod tests {
 
     #[test]
     fn root_only_tree_is_no_semantic() {
-        assert_eq!(classify(0, 0, 0), DrivingMode::NoSemantic);
+        assert_eq!(classify(0, 0, 0, false), DrivingMode::NoSemantic);
+    }
+
+    #[test]
+    fn truncated_tree_without_interior_nodes_is_not_no_semantic() {
+        // A budget cut cannot rule out a richer tree below.
+        assert_eq!(classify(0, 0, 0, true), DrivingMode::SemanticIdToCoords);
+    }
+
+    #[test]
+    fn root_with_an_action_is_full_semantic() {
+        // Actions count at every depth, including the depth-0 root.
+        assert_eq!(classify(0, 1, 0, false), DrivingMode::FullSemantic);
+        assert_eq!(classify(0, 0, 1, false), DrivingMode::FullSemantic);
     }
 
     #[test]
     fn actions_upgrade_to_full_semantic() {
-        assert_eq!(classify(40, 1, 0), DrivingMode::FullSemantic);
+        assert_eq!(classify(40, 1, 0, false), DrivingMode::FullSemantic);
     }
 
     #[test]
     fn editable_text_upgrades_to_full_semantic() {
-        assert_eq!(classify(40, 0, 1), DrivingMode::FullSemantic);
+        assert_eq!(classify(40, 0, 1, false), DrivingMode::FullSemantic);
     }
 
     #[test]
     fn structure_without_actions_needs_coordinates() {
-        assert_eq!(classify(40, 0, 0), DrivingMode::SemanticIdToCoords);
+        assert_eq!(classify(40, 0, 0, false), DrivingMode::SemanticIdToCoords);
     }
 
     #[test]
@@ -385,6 +513,58 @@ mod tests {
             ),
             RecommendedTier::Atspi
         );
+    }
+
+    #[test]
+    fn force_renderer_accessibility_token_matching() {
+        assert!(has_force_renderer_accessibility("--force-renderer-accessibility"));
+        // Chromium reads the switch presence-wise; any value still enables it.
+        assert!(has_force_renderer_accessibility("--force-renderer-accessibility=true"));
+        assert!(has_force_renderer_accessibility("--force-renderer-accessibility=false"));
+        assert!(has_force_renderer_accessibility("--FORCE-RENDERER-ACCESSIBILITY"));
+        // The negated spelling and embedded substrings do not count.
+        assert!(!has_force_renderer_accessibility("--no-force-renderer-accessibility"));
+        assert!(!has_force_renderer_accessibility("--force-renderer-accessibility-extra"));
+        assert!(!has_force_renderer_accessibility("--app=/home/u/force-renderer-accessibility"));
+    }
+
+    #[test]
+    fn sem_id_to_coords_non_chromium_stays_on_atspi() {
+        assert_eq!(
+            recommend_tier(DrivingMode::SemanticIdToCoords, false, None),
+            RecommendedTier::Atspi
+        );
+    }
+
+    #[test]
+    fn flavor_matches_basenames_not_path_substrings() {
+        assert_eq!(flavor_from_paths(Some("/usr/bin/gedit"), Some("gedit /home/u/notes/chrome-notes.txt")), None);
+        assert_eq!(flavor_from_paths(Some("/usr/share/code/code"), Some("/usr/share/code/code --no-sandbox")), Some("electron"));
+        assert_eq!(flavor_from_paths(Some("/usr/bin/slack"), Some("slack")), Some("electron"));
+        assert_eq!(flavor_from_paths(Some("/usr/bin/chromium-browser"), None), Some("chromium"));
+        assert_eq!(flavor_from_paths(None, Some("google-chrome-stable --kiosk")), Some("chrome"));
+        assert_eq!(flavor_from_paths(None, None), None);
+    }
+
+    #[test]
+    fn chromium_remedy_differs_when_flag_already_present() {
+        let relaunch = remedy(
+            DrivingMode::SemanticIdToCoords,
+            true,
+            Some("chromium"),
+            Some("chromium"),
+        )
+        .unwrap();
+        assert!(relaunch.contains("Relaunch with --force-renderer-accessibility"));
+        let already = remedy(
+            DrivingMode::SemanticIdToCoords,
+            true,
+            Some("chromium"),
+            Some("chromium --force-renderer-accessibility"),
+        )
+        .unwrap();
+        assert!(already.contains("already launched with --force-renderer-accessibility"));
+        assert!(!already.contains("Relaunch with"));
     }
 
     #[test]

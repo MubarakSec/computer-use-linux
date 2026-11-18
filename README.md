@@ -73,6 +73,7 @@ The crate was extracted from [`codex-desktop-linux`](https://github.com/avifenes
 | | `list_windows` | Compositor windows with `window_id`, title, `app_id`, `wm_class`, PID, focus state, client type (`wayland`/`x11`), bounds, and terminal TTY/process metadata. |
 | | `focused_window` | The window currently holding keyboard focus. |
 | | `list_apps` | Running desktop applications visible to the AT-SPI registry. |
+| | `preflight` | Read-only classifier reporting how the server can drive a target app: `mode` (`full_semantic` when AT-SPI Action/EditableText exists, `semantic_id_to_coords` when only identity and bounds are exposed — typical of Chromium/Electron — or `no_semantic` with no usable tree), a `recommended_tier` (`atspi`, `cdp`, or `vision`), and a remedy when the accessibility tree is unusable. Scope with `app_name_or_bundle_identifier`, `pid`, or `max_nodes`. |
 | **Input** | `click` | Click by `element_index`, semantic selector (`role`/`name`/`text`/`states`), or desktop/window-relative coordinates (`left`/`right`/`middle`, `click_count`). |
 | | `drag` | Desktop coordinate drag from `(start_x, start_y)` to `(end_x, end_y)`. |
 | | `scroll` | Page-based vertical/horizontal scroll on an element, window, or pixel coordinate. |

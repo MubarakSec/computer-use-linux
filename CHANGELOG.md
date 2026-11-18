@@ -9,12 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add a read-only `preflight` tool that classifies how the server can drive a target app: `full_semantic` (AT-SPI Action/EditableText available), `semantic_id_to_coords` (identity and bounds but no Action interface, typical of Chromium/Electron), or `no_semantic` (no usable tree, use vision). It reports `recommended_tier` (`atspi`, `cdp` for Chromium-family targets without workable AT-SPI actions and without `--force-renderer-accessibility`, or `vision`), tree statistics such as node and action counts, and an actionable remedy when the tree is unusable. Read-only: reads the AT-SPI registry and `/proc`, changes nothing.
 - Report an explicitly scoped AT-SPI root that exposes zero nodes (for example Firefox/Chromium/Electron without accessibility force-enabled) with an actionable observation note instead of an unexplained empty tree.
 - Report an app/window target that matches no AT-SPI application root with an explicit "matched no application root" note instead of a misleading empty scoped tree; post-action tree observations get the same treatment.
 
 ### Fixed
 
 - Make the targeted `get_app_state` screenshot focus error name the recovery path: call the `screenshot` tool with the same window target (`raise_window` defaults to true), then retry `get_app_state`.
+- Preflight robustness and truthfulness: a budget-truncated tree is no longer classified `no_semantic` (needs a full read before recommending vision); actions/editable text are counted at the root depth too; the process owning the matched AT-SPI roots is classified rather than the requested pid (a mismatch is reported in `note`); `--force-renderer-accessibility` is matched as a command-line token (Chromium is presence-based) and the relaunch remedy is not re-suggested to apps already launched with the flag, nor layered on AT-SPI failures; Chromium-family detection matches the exe/argv[0] basename instead of arbitrary path/argument substrings, and now recognizes common Electron app binaries (code, slack, discord, obsidian, …).
+- `accessibility_filter_unmatched_note` no longer fires when the snapshot returned nodes anyway (a pid scope winning over a non-matching app-name filter), so a delivered tree is never reported as "matched no AT-SPI application root".
 
 ## [0.7.56] - 2026-11-17
 

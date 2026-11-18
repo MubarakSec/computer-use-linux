@@ -401,6 +401,10 @@ def main() -> int:
     if not binary.exists():
         raise AssertionError(f"binary does not exist: {binary}")
 
+    overlap = READ_ONLY_TOOLS & DESTRUCTIVE_MUTATING_TOOLS
+    if overlap:
+        raise AssertionError(f"read-only tools also classed as destructive: {sorted(overlap)}")
+
     version = package_version(repo)
     annotation_partition = (
         READ_ONLY_TOOLS | NON_DESTRUCTIVE_MUTATING_TOOLS | DESTRUCTIVE_MUTATING_TOOLS
